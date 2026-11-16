@@ -54,6 +54,7 @@ Config parse_args(int argc, char **argv) {
     Config c;
     c.ports = parse_ports("21,22,25,53,80,110,135,139,143,443,445,587,993,995,1433,1521,3306,3389,"
                           "5432,5900,6379,8000,8080,8443,9200,27017");
+    bool ports_set = false, udp_payload_set = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto value = [&]() {
@@ -61,9 +62,10 @@ Config parse_args(int argc, char **argv) {
                 throw std::runtime_error("missing value for " + a);
             return std::string(argv[i]);
         };
-        if (a == "--ports" || a == "-p")
+        if (a == "--ports" || a == "-p") {
             c.ports = parse_ports(value());
-        else if (a == "--target-file" || a == "-iL")
+            ports_set = true;
+        } else if (a == "--target-file" || a == "-iL")
             read_list(value(), c.targets);
         else if (a == "--exclude")
             c.excludes.push_back(value());
@@ -77,6 +79,44 @@ Config parse_args(int argc, char **argv) {
             c.retries = number(value(), 0, 5, a);
         else if (a == "--rate")
             c.rate = number(value(), 1, 100000, a);
+        else if (a == "--deadline")
+            c.deadline_ms = number(value(), 1, 86400000, a);
+        else if (a == "--udp")
+            c.transport = "udp";
+        else if (a == "--udp-payload-hex") {
+            auto hex = value();
+            udp_payload_set = true;
+            c.udp_payload.clear();
+            if (hex.size() % 2 || hex.size() > 1024)
+                throw std::runtime_error(
+                    "UDP hex payload must have an even length, at most 512 bytes");
+            auto digit = [](char ch) -> unsigned {
+                if (ch >= '0' && ch <= '9')
+                    return static_cast<unsigned>(ch - '0');
+                if (ch >= 'a' && ch <= 'f')
+                    return static_cast<unsigned>(ch - 'a' + 10);
+                if (ch >= 'A' && ch <= 'F')
+                    return static_cast<unsigned>(ch - 'A' + 10);
+                throw std::runtime_error("invalid UDP hex payload");
+            };
+            for (size_t j = 0; j < hex.size(); j += 2)
+                c.udp_payload.push_back(
+                    static_cast<unsigned char>((digit(hex[j]) << 4) | digit(hex[j + 1])));
+        } else if (a == "--tls-ports") {
+            c.tls_ports = parse_ports(value());
+            c.tls = true;
+        } else if (a == "--http-ports") {
+            c.http_ports = parse_ports(value());
+            c.http = true;
+        } else if (a == "--verify-tls") {
+            c.verify_tls = true;
+            c.tls = true;
+        } else if (a == "--ca-file") {
+            c.ca_file = value();
+            c.verify_tls = true;
+            c.tls = true;
+        } else if (a == "--server-name")
+            c.server_name = value();
         else if (a == "--max-hosts")
             c.max_hosts = number(value(), 1, 65536, a);
         else if (a == "--format")
@@ -93,9 +133,10 @@ Config parse_args(int argc, char **argv) {
             c.only_open = true;
         else if (a == "--dry-run")
             c.dry_run = true;
-        else if (a == "--all-ports")
+        else if (a == "--all-ports") {
             c.ports = parse_ports("1-65535");
-        else if (a == "--") {
+            ports_set = true;
+        } else if (a == "--") {
             while (++i < argc)
                 c.targets.push_back(argv[i]);
             break;
@@ -103,6 +144,23 @@ Config parse_args(int argc, char **argv) {
             throw std::runtime_error("unknown option: " + a);
         else
             c.targets.push_back(a);
+    }
+    if (c.transport == "udp") {
+        if (!ports_set)
+            c.ports = parse_ports("53,123,161,500,1900,4500,5353");
+        if (c.services || c.tls || c.http || !c.server_name.empty())
+            throw std::runtime_error("UDP scans cannot use TCP service, HTTP or TLS options");
+    } else if (udp_payload_set)
+        throw std::runtime_error("--udp-payload-hex requires --udp");
+    if (!c.server_name.empty()) {
+        if (c.server_name.size() > 253 ||
+            c.server_name.find_first_not_of(
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:") !=
+                std::string::npos)
+            throw std::runtime_error(
+                "--server-name must be a DNS name or IP literal without URL syntax");
+        if (!c.tls && !c.http)
+            throw std::runtime_error("--server-name requires HTTP or TLS inspection");
     }
     if (c.targets.empty())
         throw std::runtime_error("at least one target is required (try --help)");
@@ -178,11 +236,19 @@ std::vector<Host> resolve_targets(const Config &c) {
     return out;
 }
 std::string help() {
-    return R"(AstraScan 0.1.0 — concurrent TCP inventory and service inspection
+    return R"(AstraScan 0.2.0 — concurrent TCP/UDP inventory and service inspection
 Usage: astrascan [options] TARGET [TARGET...]
 Targets: hostname, IPv4, IPv6, or IPv4 CIDR (all CIDR addresses included)
   -p, --ports LIST       Ports/ranges, e.g. 22,80,443,8000-8010
-      --all-ports        Scan TCP 1-65535
+      --udp              UDP mode (default: TCP); timeouts are open|filtered
+      --udp-payload-hex H Optional UDP payload, max 512 bytes; default empty
+      --deadline MS      Scan deadline after DNS; emits partial report (exit 124)
+      --tls-ports LIST   TLS probe ports; enables TLS, does not set scan ports
+      --http-ports LIST  HTTP probe ports; enables HTTP, does not set scan ports
+      --verify-tls       Verify TLS chain and target identity after handshake
+      --ca-file FILE     Use a PEM trust bundle; enables verification
+      --server-name NAME Override TLS/HTTP identity for every target (no DNS change)
+      --all-ports        Scan selected transport ports 1-65535
   -iL, --target-file F   Whitespace-separated targets; # comments supported
       --exclude TARGET  Exclude address, hostname, or IPv4 CIDR (repeatable)
       --exclude-file F  Read exclusions from file

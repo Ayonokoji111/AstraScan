@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Ayonokoji111/astrascan/blob/main/docs/report.schema.json",
-  "title": "AstraScan inventory report v1",
-  "description": "Finalized TCP observations. A partial report or --open output is not a complete inventory. TLS trust is never verified.",
+  "title": "AstraScan inventory report v2",
+  "description": "TCP/UDP observations with explicit scope, trust checks, HTTP completeness, and partial-report metadata.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "scanner": {
       "const": "AstraScan"
@@ -56,13 +56,18 @@
         "error": {
           "type": "integer",
           "minimum": 0
+        },
+        "open|filtered": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [
         "open",
         "closed",
         "filtered",
-        "error"
+        "error",
+        "open|filtered"
       ]
     },
     "results": {
@@ -89,14 +94,18 @@
             "maximum": 65535
           },
           "transport": {
-            "const": "tcp"
+            "enum": [
+              "tcp",
+              "udp"
+            ]
           },
           "state": {
             "enum": [
               "open",
               "closed",
               "filtered",
-              "error"
+              "error",
+              "open|filtered"
             ]
           },
           "latency_ms": {
@@ -125,7 +134,7 @@
                 "type": "boolean"
               },
               "verified": {
-                "const": false
+                "type": "boolean"
               },
               "protocol": {
                 "type": "string"
@@ -141,6 +150,23 @@
               },
               "not_after": {
                 "type": "string"
+              },
+              "verification_attempted": {
+                "type": "boolean"
+              },
+              "verification_error": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^([0-9a-f]{64})?$"
+              },
+              "sans": {
+                "type": "array",
+                "maxItems": 128,
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -150,8 +176,63 @@
               "cipher",
               "subject",
               "issuer",
-              "not_after"
+              "not_after",
+              "verification_attempted",
+              "verification_error",
+              "sha256",
+              "sans"
             ]
+          },
+          "response_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 16384
+          },
+          "http": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "headers_complete",
+              "headers"
+            ],
+            "properties": {
+              "status": {
+                "type": "integer",
+                "anyOf": [
+                  {
+                    "const": 0
+                  },
+                  {
+                    "minimum": 100,
+                    "maximum": 599
+                  }
+                ]
+              },
+              "headers_complete": {
+                "type": "boolean"
+              },
+              "headers": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "value"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "required": [
@@ -166,8 +247,135 @@
           "attempts",
           "service",
           "service_source",
-          "tls"
+          "tls",
+          "response_bytes",
+          "http"
         ]
+      }
+    },
+    "timed_out": {
+      "type": "boolean"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transport",
+        "addresses",
+        "ports"
+      ],
+      "properties": {
+        "transport": {
+          "enum": [
+            "tcp",
+            "udp"
+          ]
+        },
+        "addresses": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "ports": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        }
+      }
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workers",
+        "rate",
+        "timeout_ms",
+        "retries",
+        "deadline_ms",
+        "services",
+        "tls",
+        "verify_tls",
+        "http",
+        "server_name",
+        "udp_payload_bytes",
+        "tls_ports",
+        "http_ports"
+      ],
+      "properties": {
+        "workers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "rate": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 60000
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "deadline_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 86400000
+        },
+        "services": {
+          "type": "boolean"
+        },
+        "tls": {
+          "type": "boolean"
+        },
+        "verify_tls": {
+          "type": "boolean"
+        },
+        "http": {
+          "type": "boolean"
+        },
+        "server_name": {
+          "type": "string"
+        },
+        "udp_payload_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 512
+        },
+        "tls_ports": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "http_ports": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        }
       }
     }
   },
@@ -182,6 +390,9 @@
     "completed",
     "only_open",
     "summary",
-    "results"
+    "results",
+    "timed_out",
+    "scope",
+    "configuration"
   ]
 }

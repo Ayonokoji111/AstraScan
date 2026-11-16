@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (argc == 2 && std::string(argv[1]) == "--version") {
-            std::cout << "AstraScan " << astra::version << " C++20 TCP IPv4 IPv6"
+            std::cout << "AstraScan " << astra::version << " C++20 TCP UDP IPv4 IPv6"
 #ifdef ASTRA_TLS
                       << " OpenSSL"
 #endif
@@ -70,7 +70,8 @@ int main(int argc, char **argv) {
         if (c.dry_run) {
             std::string plan;
             if (c.format == "json") {
-                plan = "{\"dry_run\": true, \"host_count\": " + std::to_string(hosts.size()) +
+                plan = "{\"dry_run\": true, \"transport\": " + astra::json_escape(c.transport) +
+                       ", \"host_count\": " + std::to_string(hosts.size()) +
                        ", \"port_count\": " + std::to_string(c.ports.size()) +
                        ", \"tasks\": " + std::to_string(hosts.size() * c.ports.size()) +
                        ", \"hosts\": [";
@@ -85,8 +86,8 @@ int main(int argc, char **argv) {
                 plan += "]}\n";
             } else {
                 plan = "Dry run: " + std::to_string(hosts.size()) + " hosts x " +
-                       std::to_string(c.ports.size()) +
-                       " TCP ports = " + std::to_string(hosts.size() * c.ports.size()) +
+                       std::to_string(c.ports.size()) + " " + c.transport +
+                       " ports = " + std::to_string(hosts.size() * c.ports.size()) +
                        " tasks; rate <= " + std::to_string(c.rate) + " starts/s\n";
                 for (const auto &h : hosts)
                     plan += h.address + " (" + h.input + ")\n";
@@ -98,6 +99,8 @@ int main(int argc, char **argv) {
         write_output(c.output, astra::render(c, report));
         if (report.cancelled)
             return 130;
+        if (report.timed_out)
+            return 124;
         for (const auto &r : report.results)
             if (r.state == "error")
                 return 1;

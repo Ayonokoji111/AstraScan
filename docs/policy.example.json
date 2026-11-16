@@ -1,16 +1,21 @@
 {
   "schema_version": 1,
+  "required_scope": [
+    {"address": "127.0.0.1", "ports": [22, 80, 443], "transport": "tcp"}
+  ],
   "rules": [
     {
       "network": "127.0.0.0/8",
       "allow_ports": [22, 80, 443, 8443],
-      "require_tls_ports": [443, 8443],
-      "min_cert_days": 14
+      "require_verified_tls_ports": [443, 8443],
+      "min_cert_days": 14,
+      "http_ports": [80, 443, 8443],
+      "require_http_headers": ["x-content-type-options"]
     },
     {
       "network": "::1/128",
       "allow_ports": [22, 80, 443],
-      "require_tls_ports": [443],
+      "require_verified_tls_ports": [443],
       "min_cert_days": 14
     }
   ]

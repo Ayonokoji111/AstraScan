@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "required_scope": [
+    {"address": "127.0.0.1", "ports": [53, 123], "transport": "udp"}
+  ],
+  "rules": [
+    {"network": "127.0.0.0/8", "allow_udp_ports": [53, 123]}
+  ]
+}

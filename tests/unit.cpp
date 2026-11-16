@@ -68,6 +68,39 @@ int main() {
         c.format = "json";
         check(render(c, report).find("\"verified\": false") != std::string::npos,
               "TLS trust explicit");
+        Result http;
+        http.evidence = "HTTP/1.1 204 No Content\r\nSeRvEr: fixture\r\nSet-Cookie: "
+                        "a=1\r\nSet-Cookie: b=2\r\n\r\n";
+        parse_http(http);
+        check(http.http_status == 204 && http.http_headers_complete,
+              "HTTP status and completeness");
+        check(http.http_headers.size() == 3 && http.http_headers[0].first == "server",
+              "HTTP duplicate headers and normalization");
+        http.evidence = "HTTP/1.1 200 OK\r\nServer: incomplete";
+        parse_http(http);
+        check(!http.http_headers_complete && http.http_headers.empty(),
+              "incomplete last field omitted");
+        http.evidence = "HTTP/fake 200 OK\r\n\r\n";
+        parse_http(http);
+        check(http.http_status == 0, "invalid HTTP version");
+        http.evidence = "HTTP/1.1 200evil\r\n\r\n";
+        parse_http(http);
+        check(http.http_status == 0, "invalid HTTP status delimiter");
+        http.evidence = "HTTP/1.1 200 OK\r\nBad Name: ignored\r\nValid: ok\r\n\r\n";
+        parse_http(http);
+        check(http.http_headers.size() == 1, "invalid field name ignored");
+        report.results[0].tls_handshake = true;
+        report.results[0].tls_verification_attempted = true;
+        report.results[0].tls_verified = false;
+        report.results[0].tls_verification_error = "<untrusted>";
+        c.format = "html";
+        check(render(c, report).find("&lt;untrusted&gt;") != std::string::npos,
+              "TLS verification evidence HTML escaping");
+        report.results[0].transport = "udp";
+        report.results[0].state = "open|filtered";
+        c.format = "json";
+        check(render(c, report).find("open|filtered") != std::string::npos,
+              "UDP ambiguous state serialized");
         std::cout << checks << " unit checks passed\n";
     } catch (const std::exception &e) {
         std::cerr << e.what() << '\n';

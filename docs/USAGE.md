@@ -2,89 +2,152 @@
 
 ## Scope
 
-Pass one or more hostnames, numeric IPv4 addresses, IPv6 addresses, or IPv4 CIDRs. Every address in a CIDR is included, including network and broadcast addresses; the scanner does not assume these are unusable. IPv6 literals are passed without URL brackets. IPv6 zone IDs are supported when the local interface or numeric scope ID exists. IPv6 CIDR expansion is not supported.
+Targets may be hostnames, numeric IPv4/IPv6 addresses, or IPv4 CIDRs. Every address in a CIDR is included, including network and broadcast addresses. IPv6 CIDRs are unsupported; IPv6 literals do not use URL brackets. Local IPv6 interface/numeric zone IDs are supported.
 
-Hostname resolution uses the system resolver and includes all returned IPv4/IPv6 addresses. Duplicate numeric addresses are scanned once; the first target label wins. No reverse DNS lookup is performed. DNS resolution occurs even during a dry run and has the system resolver's timeout behavior, not `--timeout`. Resolution failures abort the scan before connections start. Exclusion hostnames are resolved too.
+System DNS resolves all IPv4/IPv6 addresses before scan connections start, including in dry runs. No reverse DNS is performed. Exclusion hostnames are also resolved. Duplicate numeric addresses are scanned once; the first target label wins. DNS errors abort before scanning. DNS uses the system resolver's deadlines, not scanner timeout/deadline flags.
 
 ```bash
 ./build/astrascan localhost 127.0.0.1 ::1 -p 22,80 --dry-run --format json
 ./build/astrascan 192.168.1.0/28 --exclude 192.168.1.5/32 -p 22,443
-./build/astrascan --target-file targets.txt --exclude-file exclusions.txt -p 1-1024
+./build/astrascan -iL targets.txt --exclude-file exclusions.txt -p 1-1024
 ```
 
-List files accept whitespace-separated tokens and `#` comments. Limits default to 4096 resolved hosts and an absolute maximum of 1,000,000 host/port tasks. `--max-hosts` accepts up to 65536, but a single CIDR is checked against that cap before exclusions. Split larger scopes into smaller runs. No background discovery, ping, ARP sweep, or public target selection is performed.
+List files accept whitespace-separated tokens and `#` comments. The default expansion cap is 4096 addresses; `--max-hosts` accepts 1–65536. A CIDR is checked against the cap **before** exclusions. The absolute host/port task cap is 1,000,000. Split larger scopes. The scanner performs no implicit public-target selection, ping, ARP discovery, or reverse DNS.
 
 ## Ports and tuning
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `-p`, `--ports` | 26 common TCP ports | Comma-separated ports and inclusive ranges; deduplicated and sorted |
-| `--all-ports` | Off | TCP ports 1–65535 |
-| `--workers` | 64 | Simultaneous endpoint tasks; range 1–512 |
-| `--rate` | 200 | Maximum global TCP connection starts/second; retries count too |
-| `--timeout` | 700 ms | Per-connect and per-probe phase deadline; range 10–60000 |
-| `--retries` | 0 | Extra attempts on timeouts/network errors; range 0–5 |
-| `--max-hosts` | 4096 | Scope expansion cap |
+| `-p`, `--ports` | Common ports for selected transport | Sorted, deduplicated ports/ranges |
+| `--all-ports` | Off | Ports 1–65535 for selected transport |
+| `--udp` | Off | Select UDP instead of TCP for the whole invocation |
+| `--workers` | 64 | Simultaneous endpoint tasks, 1–512 |
+| `--rate` | 200 | Global maximum attempt starts/second, including retries |
+| `--timeout` | 700 ms | Per-connect/probe phase deadline, 10–60000 |
+| `--retries` | 0 | Additional timeout/network-error attempts, 0–5 |
+| `--deadline` | Disabled | Overall scan deadline in ms, 1–86400000 |
+| `--max-hosts` | 4096 | Address expansion cap |
 
-The default ports are 21,22,25,53,80,110,135,139,143,443,445,587,993,995,1433,1521,3306,3389,5432,5900,6379,8000,8080,8443,9200,27017. These are a curated list, not a measured top-port ranking. When repeated, the last `--ports` / `--all-ports` option wins.
+Default TCP ports: 21,22,25,53,80,110,135,139,143,443,445,587,993,995,1433,1521,3306,3389,5432,5900,6379,8000,8080,8443,9200,27017. Default UDP ports: 53,123,161,500,1900,4500,5353. These are curated lists, not measured popularity rankings. The last `-p` / `--all-ports` wins.
 
-Rate limiting spaces connection starts; it does not limit all packets or bandwidth. TLS/HTTP probes run within their worker after an open connection. A task can take multiple timeout phases, particularly with retries. Blocking DNS resolution and filesystem writes are outside probe deadlines. `latency_ms` measures the final TCP connection attempt, not total task duration or application response time. A lower worker count may help avoid file descriptor limits.
+Rate limiting spaces attempt starts, not all packets or bandwidth. A TCP task can include several probe phases. Refused connections are not retried. TLS/HTTP failures after an open TCP connection are not retried. TCP `latency_ms` measures the final connection attempt; UDP measures connection setup plus final response wait. Neither is an application benchmark.
 
-## Service probes
+The overall deadline starts after DNS and clips scheduling/socket waits, including rate-limit sleeps. Deadline expiry emits finalized results with `timed_out: true`, then exits 124. It is not a hard CPU/OS kill: local CA-file loading, certificate verification CPU time, and output writes cannot be preempted by socket deadlines. SIGINT/SIGTERM stop new work and waits, then write partial results with exit 130. An interrupted task may be omitted even if its TCP connection succeeded.
 
-- `--services` reads one passive response of at most 2048 bytes. It recognizes SSH (`SSH-`), HTTP (`HTTP/`), and VNC (`RFB `) prefixes. It does not actively request versions from databases or other protocols.
-- `--http` sends `HEAD / HTTP/1.0` on 80, 8000, 8080, 8888, and 9200. `--tls --http` additionally sends HEAD after a successful TLS handshake on 443 and 8443.
-- `--tls` attempts a TLS handshake on 443, 8443, 465, 636, 993, and 995. It collects negotiated protocol/cipher and peer certificate metadata. No STARTTLS upgrade, SAN extraction, chain verification, hostname validation, or vulnerability assessment is implemented.
+## UDP observations
 
-TLS certificates are **not authenticated**: `tls.verified` is always false. A successful handshake proves only that a TLS session was negotiated. An open port remains `open` if a subsequent TLS/application probe fails; a TLS failure is recorded in `error`. Passive banners may be empty without implying an error. HTTP response headers may be truncated. Remote binary/control bytes are replaced with dots. HTTP HEAD can be logged and may have application side effects on misconfigured services.
+```bash
+./build/astrascan 127.0.0.1 --udp -p 53,123 --timeout 500 --retries 1
+./build/astrascan 127.0.0.1 --udp -p 9999 --udp-payload-hex 41535452 --format json
+```
 
-Service names without a recognized prefix are guesses based on port number, even for closed ports. JSON `service_source` distinguishes `banner` and `port_hint`. TLS protocol/cipher metadata is separate from service recognition.
+The default UDP probe is a **zero-length datagram**. `--udp-payload-hex` supplies an even-length hexadecimal string of at most 512 bytes. No protocol-specific query is generated automatically. Use a payload appropriate for the service you control when a response is needed. A service that ignores empty/unknown packets will remain inconclusive.
+
+A datagram reply, including an empty datagram, confirms `open`. A connected UDP socket's explicit `ECONNREFUSED` response is `closed`. Silence is **`open|filtered`**, never proof of openness or filtering. Other network/socket errors are `error`. No raw ICMP packet interpretation is performed; behavior depends on the OS's connected UDP socket errors. ICMP rate limiting can increase ambiguity. Evidence reads at most 2048 bytes of a datagram; `response_bytes` is the captured count, not the original length if truncated.
+
+TCP banner, HTTP, TLS, and server-name options cannot be combined with UDP mode. TCP and UDP inventories are separate runs. The policy checker distinguishes transport allowlists; inconclusive UDP observations fail policy evaluation.
+
+## Service and HTTP inspection
+
+- `--services` reads a passive banner up to 2048 bytes. SSH (`SSH-`), HTTP (`HTTP/`), and VNC (`RFB `) prefixes can confirm a service label. Other labels remain `port_hint`, including labels on closed ports. This is not broad version detection.
+- `--http` sends `HEAD / HTTP/1.0` on 80,8000,8080,8888,9200. With TLS enabled, it also probes 443/8443 after a TLS handshake.
+- `--http-ports LIST` replaces the HTTP probe port set and enables HTTP. `--tls-ports LIST` replaces the TLS set and enables TLS. Neither changes the scan port set; use `-p` too.
+- `--server-name NAME` overrides TLS SNI/verification identity and HTTP Host for **every target** in that invocation. It does not change DNS resolution or target IPs. Use single-service scopes with this option. IPv6 HTTP Host values are bracketed, and nonstandard ports are included.
+
+HTTP reads assemble split headers up to **16384 bytes** under one absolute read deadline. Reports record status, normalized lowercase header names, repeated header entries in order, and `headers_complete`. Partial trailing fields are ignored. Complete evidence is truncated at the end of headers. The parser handles HTTP/1.0 and HTTP/1.1; it does not follow redirects, negotiate HTTP/2, parse response bodies, or advance through informational responses. It reports the first observed response. HEAD may be logged and can have side effects on misconfigured applications.
+
+Remote control/non-ASCII bytes become dots. Passive banners may be absent without implying failure. HTTP headers can expose sensitive tokens/cookies and are not redacted automatically. Treat inventories as sensitive.
+
+## TLS and certificate trust
+
+Default TLS ports: 443,8443,465,636,993,995. There is no STARTTLS upgrade. OpenSSL 3 is required; no-TLS builds reject TLS flags.
+
+```bash
+./build/astrascan example.test -p 443 --verify-tls --http --format json
+./build/astrascan 127.0.0.1 -p 9443 --tls-ports 9443 --http-ports 9443 \
+  --server-name app.example.test --ca-file ./local-ca.pem --format json
+```
+
+TLS collection reports negotiated protocol/cipher, certificate subject, issuer, expiration, lowercase SHA-256 fingerprint of the leaf DER certificate, and at most 128 DNS/IP SAN entries. Each DNS SAN is bounded to 253 bytes. SANs describe the certificate; they are not new scan targets.
+
+`--tls` collects metadata without trust verification. `--verify-tls` additionally checks the leaf and presented intermediates against system CA roots, server certificate purpose/time validity, and the target DNS/IP identity. DNS matching uses OpenSSL with partial wildcards disabled. Numeric targets use IP SAN matching, unless `--server-name` overrides the identity. `--ca-file` enables verification using the specified PEM trust bundle **instead of** default roots. The CA-file path and contents are not embedded in the report.
+
+Verification occurs after the observational handshake so invalid certificates can still be inventoried. `verification_attempted` and `verified` distinguish disabled checks, verified trust, and failed trust; `verification_error` explains failure. A failed handshake means no verification was attempted. Failures preserve the open TCP state, so scanner exit 0 does **not** guarantee TLS trust. Use `require_verified_tls_ports` in a policy to enforce it.
+
+There is no online revocation check, OCSP, certificate transparency validation, automatic AIA/intermediate download, cipher-strength audit, or vulnerability assessment. Verification reflects the selected local trust bundle and scan time, not an unconditional security guarantee.
 
 ## States and exit status
 
-| State | Meaning |
+| State | Interpretation |
 | --- | --- |
-| `open` | The operating system completed a TCP connection |
-| `closed` | The connection was explicitly refused |
-| `filtered` | The connect attempt reached its timeout; filtering is only one possible cause |
-| `error` | Another failure, such as an unreachable route or local socket exhaustion |
-
-`filtered` is inconclusive: an offline host, packet loss, or a slow network can also cause it. A refused connection can originate from an intermediary. There is no host-up/down claim.
+| `open` | TCP connection succeeded, or a UDP reply was received |
+| `closed` | Explicit connection refusal; an intermediary may be responsible |
+| `filtered` | TCP connect timeout; filtering, packet loss, offline host, or latency may explain it |
+| `open\|filtered` | UDP response timeout; open service and filtering cannot be distinguished |
+| `error` | Another network or local socket failure |
 
 | Exit | Scanner | Diff | Policy |
 | --- | --- | --- | --- |
-| 0 | Completed without `error` states; closed/filtered are allowed | Successful comparison; or no changes with `--fail-on-change` | No violations in scanned endpoints |
-| 1 | At least one endpoint has `error` state | Changes found with `--fail-on-change` | Policy violations / inconclusive endpoints |
-| 2 | Invalid arguments, resolution failure, or report-write failure | Invalid/incomplete report or I/O failure | Invalid report/policy or I/O failure |
-| 130 | Interrupted scan; partial report written if possible | — | — |
+| 0 | Completed, no endpoint `error`; other states/failed TLS verification are allowed | Compared successfully; or no changes with `--fail-on-change` | No policy violations |
+| 1 | At least one endpoint `error` | Changes with `--fail-on-change` | Violations / inconclusive results |
+| 2 | Invalid input, DNS/config failure, or write failure | Invalid report / changed scope with scope guard | Invalid report/policy or I/O failure |
+| 124 | Deadline-truncated report | — | — |
+| 130 | Interrupted report | — | — |
 
-SIGINT and SIGTERM stop new work and interrupt socket waits. Workers finish cancellation promptly, then the scanner emits finalized results. A task interrupted during a probe may be omitted even if the TCP connection had succeeded. Atomic output replacement uses a temporary file in the destination directory, restrictive permissions, file fsync, and rename. It does not promise directory-level crash durability. Existing output files are replaced.
+## Reports and diffs
 
-## Reports
+`--format text|json|csv|html` selects output, and `-o FILE` writes it. Existing files are replaced atomically through a private temporary file, file fsync, and same-directory rename. Directory-level crash durability is not promised. `--open` filters rows but not summary counts; helpers reject these filtered inventories.
 
-`--format text|json|csv|html` selects output; `-o FILE` writes a file instead of stdout. `--open` filters displayed rows but leaves counts intact. JSON records `only_open` so consumers can detect filtered evidence. Ordering is numeric-address **lexicographic**, then ascending port; it is deterministic, not numeric IP ordering.
+JSON schema **2** includes transport, finalized counts, cancellation/deadline flags, resolved scope addresses/ports, configuration/probe settings, trust checks, HTTP details, and evidence. Schema-1 reports from 0.1 remain readable by the updated helpers. Old helpers cannot read v2; see [migration](MIGRATION.md). `--dry-run --format json` emits a distinct scope plan; other dry-run formats use plain text. A plan is not a scan report.
 
-Dry run emits a JSON plan with `--format json`; all other format choices yield a plain-text plan. The dry-run object is not a scan report and cannot be diffed or policy-checked.
+Output order is lexicographic by numeric address string, then port. JSON strings are ASCII-oriented, not lossless Unicode/binary forensic capture. CSV escapes cells and formula prefixes. HTML escapes evidence, uses a restrictive CSP, and loads no external resources.
 
-CSV quotes fields and prefixes potentially executable spreadsheet cells with an apostrophe. HTML escapes remote content, disables external resources and scripts with a CSP, and has no network dependencies. Inventory and certificate information may still be sensitive; reports are ignored by Git by default.
+```bash
+python3 tools/astra-diff.py before.json after.json --format json
+python3 tools/astra-diff.py before.json after.json --require-same-scope --fail-on-change
+```
+
+Diffs compare state/service; certificate handshake, protocol, cipher, identity, expiry, verification state, fingerprint and SANs; HTTP status/completeness; and `server`, `strict-transport-security`, `content-security-policy`, `x-content-type-options`, `x-frame-options` headers. Date/timing/banner noise is ignored. Scope additions/removals are separate observations. `--require-same-scope` rejects any endpoint-scope difference with exit 2. Keep probe settings consistent too; a newly enabled probe can appear as a metadata change. Helpers do not authenticate report provenance.
 
 ## Policies and CI
 
-```bash
-./build/astrascan 127.0.0.1 -p 22,80,443 --tls --format json -o inventory.json
-python3 tools/astra-policy.py inventory.json docs/policy.example.json
+Policy JSON retains `schema_version: 1`. A nonempty `rules` array contains:
+
+- `network`: canonical IPv4/IPv6 CIDR. Most specific rule wins; equal prefixes use the first rule.
+- `allow_ports`: allowed **TCP** open ports; missing means none.
+- `allow_udp_ports`: allowed **UDP** open ports; missing means none.
+- `require_tls_ports`: open TCP ports requiring a TLS handshake and parseable expiration.
+- `require_verified_tls_ports`: open TCP ports requiring a handshake, attempted/successful chain and identity verification, and parseable expiration. Use the scanner's verification flags.
+- `min_cert_days`: minimum certificate lifetime for either TLS requirement, default 0.
+- `http_ports`: open TCP ports requiring a complete, recognized HTTP response.
+- `require_http_headers`: lowercase names requiring nonempty values on `http_ports`. This checks presence only; values are not semantically audited.
+
+Closed endpoints pass exposure checks. Unmatched open endpoints fail. Filtered/error/ambiguous UDP endpoints fail as inconclusive. Required TLS/HTTP ports are **not required to be open**; this is an exposure policy, not an availability monitor.
+
+Top-level `required_scope` optionally lists exact mandatory addresses/ports/transports:
+
+```json
+{
+  "schema_version": 1,
+  "required_scope": [
+    {"address": "127.0.0.1", "ports": [22, 80, 443], "transport": "tcp"}
+  ],
+  "rules": [
+    {
+      "network": "127.0.0.1/32",
+      "allow_ports": [22, 80, 443],
+      "require_verified_tls_ports": [443],
+      "min_cert_days": 14,
+      "http_ports": [80, 443],
+      "require_http_headers": ["x-content-type-options"]
+    }
+  ]
+}
 ```
 
-A policy is a JSON object with `schema_version: 1` and a nonempty `rules` array. See [the example](policy.example.json). Each rule supports:
+A mandatory endpoint absent from the report fails as `required_endpoint_not_scanned`; TCP and UDP coverage are distinct. Equivalent IPv6 spellings are normalized. Without required coverage, policies still apply only to scanned endpoints. The schema-2 scope manifest is checked against complete result coverage by the helpers, but a forged report remains forgeable.
 
-- `network`: canonical IPv4/IPv6 CIDR.
-- `allow_ports`: permitted open TCP ports. Missing/empty means no open ports permitted.
-- `require_tls_ports`: open ports that must have a successful TLS handshake and parseable certificate expiration. Invoke the scanner with `--tls`; only its supported TLS ports can satisfy this requirement.
-- `min_cert_days`: minimum remaining certificate lifetime for `require_tls_ports`, default zero. Uses UTC.
-
-The most specific network rule wins. For equal prefix lengths, the first matching rule wins. Unmatched open endpoints are violations. Closed endpoints pass regardless of policy. Filtered/error endpoints fail as inconclusive. Required TLS ports are not required to be open; this is an exposure policy, not an availability monitor. Trust verification is not performed, so this must not be used as a certificate trust gate.
-
-**Policy coverage is only the report's scanned endpoints.** An omitted host or port is not evaluated. Scope additions/removals can be reviewed with `astra-diff`, which reports `scope_added` / `scope_removed` separately from changed observations. Use stable target/port scope in CI and inspect DNS-induced scope changes. The helpers reject empty inventories. Neither helper authenticates report provenance.
+The provided [TCP policy](policy.example.json) and [UDP policy](policy-udp.example.json) are examples; customize them before use. Run TCP and UDP policy checks separately. Expiry policy uses UTC; no TLS trust requirement is inferred from a handshake-only rule.
 
 ## Installation
 
@@ -96,4 +159,4 @@ astra-diff before.json after.json
 astra-policy inventory.json /path/to/policy.json
 ```
 
-`make install` uses GNU `install` and defaults to `/usr/local`. Use `PREFIX=/custom/path` or `DESTDIR=/staging/path` when packaging. CMake installation is also supported. Keep the two Python helpers together; the policy helper shares the diff helper's report loader. Helpers require Python 3.9+ in PATH.
+GNU `install` defaults to `/usr/local`. Override `PREFIX` or stage with `DESTDIR`. CMake installation is supported. Keep both Python helpers together because the policy tool shares the diff loader. Helpers require Python 3.9+ in PATH. A staged install is tested in CI.

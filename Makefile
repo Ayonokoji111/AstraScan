@@ -8,7 +8,7 @@ ifeq ($(TLS),1)
 CPPFLAGS += -DASTRA_TLS
 LDLIBS += -lssl -lcrypto
 endif
-SOURCES := src/config.cpp src/scanner.cpp src/report.cpp
+SOURCES := src/config.cpp src/scanner.cpp src/report.cpp src/http.cpp
 BUILD ?= build
 .PHONY: all test clean install
 all: $(BUILD)/astrascan
