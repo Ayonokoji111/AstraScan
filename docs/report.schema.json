@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Ayonokoji111/astrascan/blob/main/docs/report.schema.json",
+  "title": "AstraScan inventory report v1",
+  "description": "Finalized TCP observations. A partial report or --open output is not a complete inventory. TLS trust is never verified.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "scanner": {
+      "const": "AstraScan"
+    },
+    "version": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "elapsed_ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "cancelled": {
+      "type": "boolean"
+    },
+    "planned": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "completed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "only_open": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "open": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "closed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "filtered": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "open",
+        "closed",
+        "filtered",
+        "error"
+      ]
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "transport": {
+            "const": "tcp"
+          },
+          "state": {
+            "enum": [
+              "open",
+              "closed",
+              "filtered",
+              "error"
+            ]
+          },
+          "latency_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 6
+          },
+          "service": {
+            "type": "string"
+          },
+          "service_source": {
+            "enum": [
+              "banner",
+              "port_hint"
+            ]
+          },
+          "tls": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "handshake": {
+                "type": "boolean"
+              },
+              "verified": {
+                "const": false
+              },
+              "protocol": {
+                "type": "string"
+              },
+              "cipher": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "issuer": {
+                "type": "string"
+              },
+              "not_after": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "handshake",
+              "verified",
+              "protocol",
+              "cipher",
+              "subject",
+              "issuer",
+              "not_after"
+            ]
+          }
+        },
+        "required": [
+          "target",
+          "address",
+          "evidence",
+          "error",
+          "port",
+          "transport",
+          "state",
+          "latency_ms",
+          "attempts",
+          "service",
+          "service_source",
+          "tls"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "scanner",
+    "version",
+    "started_at",
+    "elapsed_ms",
+    "cancelled",
+    "planned",
+    "completed",
+    "only_open",
+    "summary",
+    "results"
+  ]
+}

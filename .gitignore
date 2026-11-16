@@ -1,0 +1,11 @@
+/build*/
+/__pycache__/
+**/__pycache__/
+*.pyc
+*.pem
+*.key
+.env
+.env.*
+/reports/
+/dist/
+*.tmp.*

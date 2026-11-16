@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "network": "127.0.0.0/8",
+      "allow_ports": [22, 80, 443, 8443],
+      "require_tls_ports": [443, 8443],
+      "min_cert_days": 14
+    },
+    {
+      "network": "::1/128",
+      "allow_ports": [22, 80, 443],
+      "require_tls_ports": [443],
+      "min_cert_days": 14
+    }
+  ]
+}

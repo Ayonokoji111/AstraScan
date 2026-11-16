@@ -1,0 +1,23 @@
+name: Bug report
+description: Report a reproducible non-sensitive correctness issue.
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version and environment
+      description: Include --version output, OS, compiler, and build flags.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Local reproduction
+      description: Use loopback fixtures or synthetic input. Remove private inventory data.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and observed behavior
+    validations:
+      required: true

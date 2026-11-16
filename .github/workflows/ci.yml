@@ -1,0 +1,39 @@
+name: Build and test
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: g++
+            tls: 1
+          - compiler: g++
+            tls: 0
+          - compiler: clang++
+            tls: 1
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev openssl
+      - name: Build and loopback-only tests
+        run: make CXX=${{ matrix.compiler }} TLS=${{ matrix.tls }} test -j2
+      - name: Staged installation and helpers
+        run: |
+          make TLS=${{ matrix.tls }} DESTDIR="$RUNNER_TEMP/astra-stage" install
+          "$RUNNER_TEMP/astra-stage/usr/local/bin/astrascan" --version
+          "$RUNNER_TEMP/astra-stage/usr/local/bin/astra-diff" --help
+          "$RUNNER_TEMP/astra-stage/usr/local/bin/astra-policy" --help
+  cmake-sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: sudo apt-get update && sudo apt-get install -y libssl-dev openssl
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DASTRA_ENABLE_SANITIZERS=ON
+      - run: cmake --build build -j2
+      - run: ctest --test-dir build --output-on-failure
